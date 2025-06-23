@@ -1,6 +1,8 @@
 import json
 from collections import defaultdict
 
+''' Data pre-processing code used in training.py to parse image annotations in coco format [x_min, y_min, width, height] for bounding boxes. This was developed off a coco training set with images and json annotations.'''
+
 def split_annotations_dict(annotations_dict):
     file_names = []
     annotations = []
