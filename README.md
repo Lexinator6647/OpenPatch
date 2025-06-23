@@ -4,6 +4,9 @@ A minimal, interpretable object detection system built from scratch in PyTorch. 
 
 Unlike anchor-based models, this detector uses a grid-style sliding approach on top of convolutional feature maps, allowing for flexible window coverage with overlap and smoother detection near object boundaries. Ideal for those seeking a lightweight, transparent alternative to large detection frameworks.
 
+This code base was trained, developed and tested off the COCO 128 training set with coco format labels in JSON. The *training.py* and *inference.py* scripts under *src/* are compatible with COCO JSON annotations such that the bounding boxes are in the format <br>
+```[x_min, y_min, width, height]```
+
 ---
 
 ## Highlights
