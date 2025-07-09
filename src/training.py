@@ -15,7 +15,7 @@ import process_json_labels as pj
 # 1. Define the Custom Dataset
 # ----------------------------
 class ObjectDetectionDataset(Dataset):
-    def __init__(self, image_paths, annotations, transform, grid_size = 32, num_boxes =2, num_classes=75):
+    def __init__(self, image_paths, annotations, transform, grid_size = 128, num_boxes =2, num_classes=75):
         """
             Args:
             - image_paths: List of image file paths.
@@ -40,7 +40,7 @@ class ObjectDetectionDataset(Dataset):
     def __getitem__(self, idx):
         image = self.load_image(self.image_paths[idx])  # Implement this function to load images
         bboxes =  self.annotations[idx]  # List of (x, y, w, h, class_id)
-        print(f"bboxes: {bboxes} at idx {idx}")
+        #print(f"bboxes: {bboxes} at idx {idx}")
         
         # Convert bounding boxes into the YOLO-style target tensor
         target= generate_windowed_targets(bboxes, self.height, self.width)
@@ -62,7 +62,7 @@ class ObjectDetectionDataset(Dataset):
 # 2. Define the Model
 # ----------------------------
 class SimpleObjectDetector(nn.Module):
-    def __init__(self, grid_size=32, num_boxes=2, num_classes=75, overlap_factor=0.1):
+    def __init__(self, grid_size=128, num_boxes=2, num_classes=75, overlap_factor=0.1):
         super(SimpleObjectDetector, self).__init__()
         self.grid_size = grid_size
         self.num_boxes = num_boxes
@@ -76,15 +76,16 @@ class SimpleObjectDetector(nn.Module):
             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1), nn.ReLU(),
         )
         self.backbone2 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1), nn.ReLU(),
+            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1), nn.ReLU()
         )
 
         self.output_size = (5 + num_classes)
         self.output_size2 = num_boxes * (5 + num_classes)  # just per patch
 
         self.pool1 = nn.AdaptiveAvgPool2d((7, 7)) 
-        self.pool2 = nn.AdaptiveAvgPool2d((32, 32)) # correspond to grid size or window size
+        self.pool2a = nn.AdaptiveAvgPool2d((128, 128)) # correspond to grid size or window size
+        self.pool2 = nn.AdaptiveAvgPool2d((64, 64))
 
         # define fully connected layers assuming output 128
         self.fc1 = nn.Linear(128, self.output_size)
@@ -107,8 +108,8 @@ class SimpleObjectDetector(nn.Module):
 
         # Reshape into (batch, num_windows, channels, window_size, window_size)
         num_windows_h, num_windows_w = unfolded.shape[1], unfolded.shape[2]
-        print(f"num_windows_h: {num_windows_h}")
-        print(f"num_windows_w: {num_windows_w}")
+        #print(f"num_windows_h: {num_windows_h}")
+        #print(f"num_windows_w: {num_windows_w}")
         windows = unfolded.view(batch_size, num_windows_h * num_windows_w, channels, window_size, window_size)
 
         return windows  # (batch, num_windows, channels, window_size, window_size)
@@ -120,6 +121,7 @@ class SimpleObjectDetector(nn.Module):
         batch_size = window.size(0)
         window = window.transpose(2, 1)
         window = self.backbone2(window)
+        window = self.pool2a(window)
         window = self.pool2(window)
         window = window.view(batch_size, -1)  # Flatten window features
         return self.fc2(window)  # Output (class + bbox)
@@ -128,12 +130,6 @@ class SimpleObjectDetector(nn.Module):
         # Feature extraction
         x = self.backbone(x)
         feature_map = x
-        x = self.pool1(x)
-        x = x.view(x.shape[1], -1)
-        x = x.transpose(0,1)
-        x = self.fc1(x)
-        x = x.view(-1, (5 + self.num_classes))
-
         # Extract overlapping windows
         windows = self._extract_sliding_windows(feature_map, self.grid_size, self.overlap_factor)
 
@@ -151,9 +147,9 @@ class SimpleObjectDetector(nn.Module):
 # ----------------------------
 
 def generate_windowed_targets(
-    bboxes_list, orig_height, orig_width, image_size=224, window_size=32, overlap_factor=0.1,
+    bboxes_list, orig_height, orig_width, image_size=224, window_size=128, overlap_factor=0.1,
     num_classes=75, num_boxes=2
-):
+): # window_size 32, 64
     """
     Generate target tensors that align with sliding window patches and allow multiple boxes per window.
     
@@ -181,14 +177,14 @@ def generate_windowed_targets(
             for x_idx in range(num_windows_per_axis):
                 # Window bounds in normalized coordinates from 0 to 1 relative to image size
                 x_start = (x_idx * stride) / image_size
-                print(f"x_start: {x_start}")
+                #print(f"x_start: {x_start}")
                 y_start = (y_idx * stride) / image_size
-                print(f"y_start: {y_start}")
+                #print(f"y_start: {y_start}")
                 # converts back to pixel-space (x_start * image_size), adds the window size, and then renormalizes to [0,1]
                 x_end = (x_start * image_size + window_size) / image_size
-                print(f"x_end: {x_end}")
+                #print(f"x_end: {x_end}")
                 y_end = (y_start * image_size + window_size) / image_size
-                print(f"y_end: {y_end}")
+                #print(f"y_end: {y_end}")
 
                 # Initialize empty window target
                 window_target = torch.zeros(num_boxes * (5 + num_classes))
@@ -199,9 +195,9 @@ def generate_windowed_targets(
                         break
                     x, y, w, h, class_id = bbox
                     x = x/w_ratio
-                    print(f"x:{x}")
+                    #print(f"x:{x}")
                     y = y/h_ratio
-                    print(f"y:{y}")
+                    #print(f"y:{y}")
                     w = w/w_ratio
                     h = h/h_ratio
                     x_norm = x/image_size
@@ -209,7 +205,7 @@ def generate_windowed_targets(
                     if x_start <= x_norm <= x_end and y_start <= y_norm <= y_end:
                         start_idx = box_count * (5 + num_classes)
                         window_target[start_idx:start_idx+4] = torch.tensor([x, y, w, h])
-                        print(f"window_target bbox: {window_target[start_idx:start_idx+4]}")
+                        #print(f"window_target bbox: {window_target[start_idx:start_idx+4]}")
                         window_target[start_idx + 4] = 1.0  # Confidence
                         class_offset = start_idx + 5 + (class_id - 1)
                         if class_offset < len(window_target):  # Prevent indexing error
@@ -269,8 +265,8 @@ data_transform = transforms.Compose([
 ])
 
 def main():
-    train_image_paths, train_labels = pj.parse_annotations('coco-expanded/train/_annotations.coco.json', 'coco-expanded/train/')
-    val_image_paths, val_labels = pj.parse_annotations('coco-expanded/valid/_annotations.coco.json', 'coco-expanded/valid/')
+    train_image_paths, train_labels = pj.parse_annotations('COCO_dog_subset/train/annotations/instances_dog_subset.json', 'COCO_dog_subset/train/images/')
+    val_image_paths, val_labels = pj.parse_annotations('COCO_dog_subset/val/annotations/instances_dog_subset.json', 'COCO_dog_subset/val/images/')
 
     train_dataset = ObjectDetectionDataset(train_image_paths, train_labels, transform=data_transform)
     val_dataset = ObjectDetectionDataset(val_image_paths, val_labels, transform=data_transform)
@@ -279,7 +275,7 @@ def main():
 
     model = SimpleObjectDetector()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    num_epochs = 3
+    num_epochs = 6
 
     for epoch in range(num_epochs):
         for images, targets in train_dataloader:
@@ -306,8 +302,8 @@ def main():
     'overlap_factor': 0.1,
     'num_boxes': 2,
     'num_classes': 75,
-    'grid_size': 32,
-}, "object_detector_windows_xywh_stride32.pth")
+    'grid_size': 128,
+}, "object_detector_windows_dogs_128.pth")
     print("Training complete. Model saved.")
 
 if __name__ == "__main__":
