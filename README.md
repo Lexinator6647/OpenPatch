@@ -36,6 +36,8 @@ YOLO and similar detection models are powerful but increasingly complex and rest
 ## Example Use Case
 
 ```
+bash python download_coco_annotations.py
+bash python import_coco_by_class.py --stage train
 bash python inference.py --model my-model.pth --images images/example.png
 ```
 
@@ -43,7 +45,7 @@ bash python inference.py --model my-model.pth --images images/example.png
 
 ## Current Limitations
 
-* **Inference instability on distributed GPUs**: Still debugging crashes during NMS with multi-node runs.
+* **Manual window size and overlap tuning**: Stil needs enhancements to automate this, estimating average window size of labelled objects.
 * **Not tested at large scale yet**: Functional for small datasets and toy examples.
 * **No export pipeline (yet)**: Not currently packaged for ONNX or TorchScript.
 
