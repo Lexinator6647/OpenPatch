@@ -4,7 +4,7 @@ from PIL import Image
 import argparse
 import os
 import glob
-from multi_object_windows_xywh import SimpleObjectDetector  # Make sure this is the model class you trained
+from multi_object_windows_xywh_refined import SimpleObjectDetector  # Make sure this is the model class you trained
 import numpy as np
 from torchvision.ops import batched_nms
 
@@ -102,7 +102,8 @@ def classwise_nms(predictions, iou_thresh=0.1, conf_thresh=0.45):
 
 def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size=224):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model_path = 'object_detector_windows_xywh_stride32.pth' # Testing path
+    # model_path = 'object_detector_windows_xywh_stride32.pth' # Testing
+    model_path = 'object_detector_windows_dogs.pth' # Testing
     checkpoint = torch.load(model_path, map_location=device)
 
     # Extract config
@@ -158,7 +159,11 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
 
                     slice = window[start:end]         # Get the slice from the current window
 
+                    'With ReLU'
                     box = slice[:4].unsqueeze(0)      # Shape [1, 4] for consistency
+
+                    'Without ReLU'
+                    #box = torch.sigmoid(slice[:4].unsqueeze(0))
 
                     conf = slice[4]                   # Confidence (scalar)
 
@@ -166,7 +171,7 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
                     print("class_scores (logits):", class_scores[0])
                     
                     'test training activations'
-                    # Replace sigmoid(conf) with just clamped confidence to test confidence levels if showing as 0.0
+                    # Replace sigmoid(conf) with just clamped confidence
                     print("Conf logits stats:", conf.min().item(), conf.max().item(), conf.mean().item())
                     conf = torch.sigmoid(conf) # skip sigmoid for testing
                     print("Conf after sigmoid:", conf.min().item(), conf.max().item(), conf.mean().item())
