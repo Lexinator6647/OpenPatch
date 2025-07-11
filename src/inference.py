@@ -4,10 +4,11 @@ from PIL import Image
 import argparse
 import os
 import glob
-from multi_object_windows_xywh_refined import SimpleObjectDetector  # Make sure this is the model class you trained
+from training import SimpleObjectDetector
 import numpy as np
 from torchvision.ops import batched_nms
-
+from PIL import Image, ImageDraw
+from torchvision.transforms import ToPILImage
 
 def bbox_iou_chunked(box1, boxes, chunk_size=1024):
     total = boxes.size(0)
@@ -53,17 +54,7 @@ def bbox_iou(box1, boxes):
     union_area = area1 + area2 - inter_area + 1e-6 # added for numerical stability to avoid division by 0
     return inter_area / union_area
 
-def get_window_grid_positions(image_size, window_size, stride):
-    """
-    Returns a list of (x0, y0) for the top-left corner of each window.
-    """
-    positions = []
-    for y in range(0, image_size - window_size + 1, stride):
-        for x in range(0, image_size - window_size + 1, stride):
-            positions.append((x, y))
-    return positions
-
-def classwise_nms(predictions, iou_thresh=0.1, conf_thresh=0.45):
+def classwise_nms(predictions, iou_thresh=0.1, conf_thresh=0.1): #conf thresh = 0.45
     """
     Apply class-wise non-maximum suppression.
     Each prediction is (x, y, w, h, confidence, class_id)
@@ -76,6 +67,7 @@ def classwise_nms(predictions, iou_thresh=0.1, conf_thresh=0.45):
 
     for cls in range(num_classes):
         cls_preds = predictions[predictions[:, -1] == cls]
+        #print(f"raw cls conf {cls_preds[:, 4]}")
         cls_preds = cls_preds[cls_preds[:, 4] > conf_thresh]
 
         while cls_preds.size(0):
@@ -99,11 +91,17 @@ def classwise_nms(predictions, iou_thresh=0.1, conf_thresh=0.45):
 
     return torch.stack(filtered_preds) if filtered_preds else torch.empty((0, 6))
 
+def get_window_grid_positions(image_size, window_size, stride):
+    positions = []
+    for y in range(0, image_size - window_size + 1, stride):
+        for x in range(0, image_size - window_size + 1, stride):
+            positions.append((x, y))
+    return positions
+
 
 def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size=224):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # model_path = 'object_detector_windows_xywh_stride32.pth' # Testing
-    model_path = 'object_detector_windows_dogs.pth' # Testing
+    model_path = 'object_detector_windows_dogs_128_small.pth' # Testing
     checkpoint = torch.load(model_path, map_location=device)
 
     # Extract config
@@ -121,6 +119,7 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
     # Load weights only
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval().to(device)
+    print("First conv layer weights stats:", model.backbone[0].weight.data.mean(), model.backbone[0].weight.data.std())
 
     transform = transforms.Compose([
         transforms.Resize((image_size, image_size)),
@@ -128,15 +127,19 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
     ])
 
     image_paths = glob.glob(os.path.join(image_dir, "*.jpg"))
-
+    print(f"image paths: {image_paths}")
     for img_path in image_paths:
+        print(f"curent img path: {img_path}")
         img = Image.open(img_path).convert("RGB")
         img_tensor = transform(img).unsqueeze(0).to(device)
+        pil_tensor = transform(img).squeeze(0).to(device)
+        print(f"tensor for {img_path}: {img_tensor}")
 
         with torch.no_grad():
             output = model(img_tensor)
             print("Output stats:", output.min().item(), output.max().item(), output.mean().item())
 
+        print(f"output shape: {output.shape}")
         output = output.view(-1, num_boxes * (5 + num_classes))
 
         all_preds = []
@@ -159,11 +162,7 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
 
                     slice = window[start:end]         # Get the slice from the current window
 
-                    'With ReLU'
                     box = slice[:4].unsqueeze(0)      # Shape [1, 4] for consistency
-
-                    'Without ReLU'
-                    #box = torch.sigmoid(slice[:4].unsqueeze(0))
 
                     conf = slice[4]                   # Confidence (scalar)
 
@@ -187,26 +186,32 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
                     total_conf = final_scores
 
                     # Step 1: Filter
-                    obj_thresh = 0.47
+                    # obj_thresh = 0.47
+                    obj_thresh = 0.1
                     obj_keep = objectness > obj_thresh
 
                     if not obj_keep.any():
                         continue
 
-                    keep = final_scores > 0.4
+                    #keep = final_scores > 0.4
+                    keep = final_scores > 0.05
                     
                     box = box[keep]
+                    print(f"box: {box}")
 
-                    w = box[:, 2] * window_size
-                    h = box[:, 3] * window_size
-                    x = box[:, 0] * window_size + x0
-                    y = box[:, 1] * window_size + y0
+                    w = box[:,:, 2]
+                    h = box[:,:, 3]
+                    x = box[:,:, 0] + x0
+                    y = box[:,:, 1] + y0
                     
                     remapped_boxes = torch.stack([x, y, w, h], dim=1)
 
-                    boxes_kept = remapped_boxes
+                    boxes_kept = remapped_boxes.view(1,-1)
+                    print(f"boxes_kept: {boxes_kept}")
                     scores_kept = total_conf[keep].unsqueeze(1)
+                    print(f"scores_kept: {scores_kept}")
                     classes_kept = class_ids[keep].float().unsqueeze(1)
+                    print(f"classes_kept: {classes_kept}")
 
                     if remapped_boxes.shape[0] == 0:
                         continue
@@ -219,11 +224,29 @@ def run_inference(model_path, image_dir, num_boxes=2, num_classes=75, image_size
             all_preds = torch.cat(all_preds, dim=0)
             scores = all_preds[:, 4] * all_preds[:, 5:].max(dim=-1).values
             filtered_preds = classwise_nms(all_preds)
-
+            to_pil = ToPILImage()
+            resized_pil = to_pil(pil_tensor)
             print(f"\nResults for {os.path.basename(img_path)}: {all_preds}")
             for pred in filtered_preds:
                 x, y, w, h, conf, class_id = pred.tolist()
                 print(f"Class {int(class_id)+1}: ({x:.2f}, {y:.2f}, {w:.2f}, {h:.2f}), conf: {conf:.2f}")
+                draw = ImageDraw.Draw(resized_pil)
+                
+                if w < 0:
+                    w = 0
+                if h <0:
+                    h = 0
+
+                x1 = x - w / 2
+                y1 = y - h / 2
+                x2 = x + w / 2
+                y2 = y + h / 2
+
+                draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+                draw.text((x1, y1), f"{int(class_id)+1}: {conf:.2f}", fill="red")
+
+            resized_pil.save(f"{img_path}_output.jpg")
+            
         else:
             print(f"\nNo confident predictions for {os.path.basename(img_path)}.")
 
