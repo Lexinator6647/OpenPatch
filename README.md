@@ -53,10 +53,8 @@ bash python inference.py --model my-model.pth --images images/example.png
 
 ## Roadmap / Future Work
 
-* [ ] Fix NMS crash during inference on distributed GPUs
-* [ ] Add COCO-style metrics script
-* [ ] Add export support (TorchScript / ONNX)
-* [ ] Integrate basic GUI visualizer for predictions
+* [ ] Support additional annotation formats aside from COCO (Pascal VOC, YOLO)
+* [ ] Add more metrics for training script
 
 ---
 
