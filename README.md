@@ -68,7 +68,7 @@ MIT License. No forced open-source disclosure for commercial use unlike YOLOv8+.
 
 ## Credits
 
-Built with PyTorch. Inspired by the architecture and sliding nature of convolution itself. Initial concept derived from rethinking object detection as a multi-window classification problem.
+Built with PyTorch. Inspired by the architecture and sliding nature of convolution itself. Initial concept derived from rethinking object detection as a multi-window classification problem. **Author**: Alexandra Ciupahina
 
 ---
 
